@@ -1,0 +1,68 @@
+
+--Tarih 1 Eylül 2020, Extension modül adı yerel market teslimat işine girdi. yeni modülün büyümesini takip etmek istiyorsun. 
+--Hangi metriklere bakarsın? Var olan datayla bir rapor hazırlar mısın?
+
+
+-- Extension ilk sipariş tarihi 2020-06-10 06:58:10.735 UTC
+
+--elimizdeki tabloda her sipariş geçildiğinde bir satır oluşuyor.
+--3 aylık bir veriye bakılacağı için haftalık olarak incelenecektir. 
+--haftalık yeni kaydolan üye sayısı
+--haftalık toplam müşteri sayısı
+-- haftalık yeni kaydolan üye sayısı/aktif üye sayısı
+-- haftalık total amount
+--haftalık user başına total amount
+-- haftalık user başına order
+
+--transaction verileri ile user verileri birleştirilmesi
+with main as(
+select * from `datacamp-342108.final.users` u join `datacamp-342108.final.transaction` t on u.user_id = t.user_id) 
+
+
+
+select SHIPMENT_DISTRICT_ID, count(distinct create_date)
+from main 
+where order_date  between '2020-03-10 00:00:00' and '2020-06-01 00:00:00' 
+group by 1
+order by 2 desc; 
+
+----- yeni kaydolan kullanıcı sayısı
+
+-- aşağıdaki query çalışınca son haftanın iki gün ilk haftanın ise hafta ortası olması sebebiyle week 23 ve week 35 analizden çıkarıldı.
+
+select count(distinct extract (day from order_date)), extract(week from order_date) as week_of_year
+from `datacamp-342108.final.transaction` 
+where order_date < '2020-09-01 00:00:00' and Platform = 'Grocery'
+group by 2
+order by 2;
+
+
+with weeks_extracted_all as (
+select *, extract(week from order_date) as week_of_year,min(order_date) over(Partition by user_id) as extension_first_order_date, extract(week from (min(order_date) over(Partition by user_id))) as extension_first_order_week, case when extension_first_order_week=week_of_year then 1 else 0 end as first_order_condition
+from `datacamp-342108.final.transaction as t
+left join `datacamp-342108.final.users` as u using (user_id)
+where order_date < '2020-09-01 00:00:00' and Platform = 'Grocery'
+)
+
+
+
+select week_of_year
+,count(distinct create_date) as new_user_count
+,count(distinct first_order_date) as first_order_count
+,count(distinct first_order_date)/count(distinct create_date) as fo_nu_ratio
+,count(distinct order_parent_id) as order_count
+,round(sum(total_amount),2) as total_amount_per_week
+,round(sum(total_amount),2)/ count(distinct user_id) as amount_per_user
+,count(distinct order_parent_id)/ count(distinct user_id) orders_per_user
+,count(distinct SHIPMENT_DISTRICT_ID) as available_districts
+from weeks_extracted_all
+where week_of_year between 24 and 34
+group by week_of_year
+order by week_of_year;
+
+
+-- haftalık birden fazla sipariş vermiş kullanıcı sayısı
+select user_id, count(distinct order_parent_id),extract(week from order_date) as week_of_year from `datacamp-342108.final.transaction`   
+where (extract(week from order_date) between 24 and 34)
+group by user_id
+having count(distinct order_parent_id) > 1;
