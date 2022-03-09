@@ -1,0 +1,217 @@
+--Elimizde iki adet uygulama var. Core uygulama ve sonradan eklenmiş extension modül. İkisinin müşterileri aynı da farklı da olabilir.
+--Tarih 1 temmuz 2021, Extension uygulamaya kampanya çıkılacak. Geçmiş bilgilere göre kampanyaya katılım oranı %10 oluyor. Toplam kişi başı 25 TL'den 50000 TL bütçe olduğuna göre core müşterilerinden hangilerine kampanya çıkarsın?
+
+--Yapılacaklar:
+--Bu kampanya sonucunda beklentimiz core uygulamadan extension uygulamaya kullanıcı kazandırıp bu kullanıcıların da sürekli olması beklenmelidir. bir kez kampanya için kullanıp bir daha kullanmayacak kullanıcılardan çok sadık potansiyeli yüksek kullanıcılar tespit edilmelidir.
+--Extension uygulamayı kullanan ve core uygulamadan geçen sadık kullanıcılar tespit edilir: RFM analizi yapılarak R ve F değerleri sadık kullanıcı profiline uygun olan kullanıcılar tespit edilecektir.
+--Tespit edilen sadık kullanıcıların core uygulamadaki RFM analizi yapılır. Oransal olarak RF değerlerine göre bakılır, en fazla oranda olan müşteri tipi tespit edilir.
+--Core kullanıcılarından extension uygulamayı hiç kullanmamış kişiler tespit edilir.
+--Extension uygulamanın sadık kullanıcılarının coredaki davranışına uygun kullanıcılar seçilecektir. Verilen bilgilere göre 20000 kişiye kampanya çıkılacaktır. 2000 kişi kullandıktan sonra kampanya durdurulacaktır. 
+
+
+
+--TABLOLAR
+
+-- hedefkitle tablosu oluşturuldu : core uygulamayı kullanıp henüz extension uygulamadan sipariş vermeyen kullanıcılar. 
+-- extension uygulama kullanmış olanlar Platform='Grocery' olan kullanıcılar. 
+-- tarih 1 temmuz 2021 olarak analiz yapılması isteniyor ve elimizdeki veri daha sonranın verisini de içerdiği için bir tarih kısıtı eklendi.
+
+create table `datacamp-342108.final.q3_hedefkitle` as(
+select * from `datacamp-342108.final.transaction`
+where user_id not in (select user_id from `datacamp-342108.final.transaction`  --kullanıcıların paltformu Grocery olanlar arasında olmaması koşulu
+  where Platform = 'Grocery' and order_date<'2021-07-01 00:00:00')
+and order_date < '2021-07-01 00:00:00'                                                 
+and SHIPMENT_DISTRICT_ID in( select distinct SHIPMENT_DISTRICT_ID from `datacamp-342108.final.transaction` where order_date < '2021-07-01' and Platform ='Grocery') )
+
+--coredan extension a geçmiş insanların core'daki transaction verileri oluşturuluyor
+
+create table `datacamp-342108.final.q3_core_to_extension` as(
+select * 
+from `datacamp-342108.final.transaction`
+where user_id in (select user_id from `datacamp-342108.final.transaction` 
+                  where Platform = 'Grocery' and order_date<'2021-07-01 00:00:00')
+and order_date < '2021-07-01 00:00:00'
+and Platform='Core')
+
+
+
+--coredan extension a geçmiş insanların extension'daki transaction
+
+create table `datacamp-342108.final.q3_core_to_extension_extension` as(
+select * 
+from `datacamp-342108.final.transaction`
+where user_id in (select user_id from `final.q3_core_to_extension`)
+and order_date < '2021-07-01 00:00:00'
+and Platform='Grocery')
+
+
+
+
+--kullanıcıların en son ne zaman alışveriş yaptıklarını belirlemek için recencey hesaplandı. 5 en iyi 1 en kötü olmak üzere 5 koda ayrıldı
+--kullanıcıların gün içinsinden ortalama kaç günde bir alışveriş yaptıkları çıkarıldı ve 0 ile 90 gün arasında değiştiği tespit edilerek 5 koda gruplandı. 5 en sık alışveriş yapan 1 en az olarak her kullanıcıya kod verildi.
+
+--coredan extension a geçmiş kullanıcıların extension'daki RF değerlerinin hesaplandığı tablo
+
+create table `datacamp-342108.final.q3_extension_rfm` as(
+
+with rfm as (select user_id,
+case when max(order_date) between ('2021-05-01 00:00:00') and ('2021-07-01 00:00:00') then 5
+when max(order_date) between ('2021-04-01 00:00:00') and ('2021-05-01 00:00:00') then 4
+when max(order_date) between ('2021-03-01 00:00:00') and ('2021-04-01 00:00:00') then 3
+when max(order_date) between ('2021-02-01 00:00:00') and ('2021-03-01 00:00:00') then 2
+when max(order_date) between ('2021-01-01 00:00:00') and ('2021-02-01 00:00:00') then 1 end as recency
+,max(order_date) as last_order_date
+,min(order_date) first_order_date
+,count(distinct order_parent_id) order_count
+,(timestamp_diff(max(order_date),min(order_date), day )/(count(distinct order_parent_id))) as freq_day
+from `datacamp-342108.final.q3_core_to_extension_extension`
+where (order_date between '2021-01-01 00:00:00' and '2021-07-01 00:00:00') and Platform = 'Grocery'
+group by user_id
+order by freq_day desc 
+)
+
+select user_id ,recency ,freq_day
+,case when freq_day between 0 and 18 then 5
+when freq_day between 18 and 36 then 4
+when freq_day between 36 and 54 then 3
+when freq_day between 54 and 72 then 2
+else 1 end frequency
+from rfm
+order by user_id)
+
+
+--extension daki loyal müşterilerin core'daki davranışları için rf değerlerinden tablo oluşturulması
+--kullanıcıların en son ne zaman alışveriş yaptıklarını belirlemek için recencey hesaplandı. 5 en iyi 1 en kötü olmak üzere 5 koda ayrıldı
+--kullanıcıların gün içinsinden ortalama kaç günde bir alışveriş yaptıkları çıkarıldı ve 0 ile 60 gün arasında değiştiği tespit edilerek 5 koda gruplandı. 5 en sık alışveriş yapan 1 en az olarak her kullanıcıya kod verildi. 
+--daha sonra en fazla müşteri adeti içerene göre excel üzerinde gösterilerek hedef kodlar çıkarılacak.
+
+create table `datacamp-342108.final.rfm_core_to_extension` as(
+with rfm2 as (
+  select user_id,
+      case when max(order_date) between ('2021-05-01 00:00:00') and ('2021-07-01 00:00:00') then 5
+      when max(order_date) between ('2021-04-01 00:00:00') and ('2021-05-01 00:00:00') then 4
+      when max(order_date) between ('2021-03-01 00:00:00') and ('2021-04-01 00:00:00') then 3
+      when max(order_date) between ('2021-02-01 00:00:00') and ('2021-03-01 00:00:00') then 2
+      when max(order_date) between ('2021-01-01 00:00:00') and ('2021-02-01 00:00:00') then 1 end as recency
+  ,max(order_date) as last_order_date
+  ,min(order_date) first_order_date
+  ,count(distinct order_parent_id) order_count
+  ,(timestamp_diff(max(order_date),min(order_date), day )/(count(distinct order_parent_id))) as freq_day
+from `datacamp-342108.final.transaction`
+where (order_date between '2021-01-01 00:00:00' and '2021-07-01 00:00:00')
+and user_id in (
+    select distinct user_id from `datacamp-342108.final.q3_extension_rfm` 
+    where recency in (3,4) 
+    and frequency in (4,5)
+    )
+group by user_id 
+)
+
+select user_id ,recency ,freq_day
+,case when freq_day between 0 and 12 then 5
+when freq_day between 12 and 24 then 4
+when freq_day between 24 and 36 then 3
+when freq_day between 36 and 48 then 2
+else 1 end frequency
+from rfm2)
+
+
+--hedef kitle rf değerlerinin çıkarılması
+--sonrasında bu kişiler arasından loyal müşteri kodlarına göre seçim yapılacak.
+
+create table `datacamp-342108.final.rfm_hedefkitle` as(
+with rfm3 as (select user_id,
+case when max(order_date) between ('2021-05-01 00:00:00') and ('2021-07-01 00:00:00') then 5
+when max(order_date) between ('2021-04-01 00:00:00') and ('2021-05-01 00:00:00') then 4
+when max(order_date) between ('2021-03-01 00:00:00') and ('2021-04-01 00:00:00') then 3
+when max(order_date) between ('2021-02-01 00:00:00') and ('2021-03-01 00:00:00') then 2
+when max(order_date) between ('2021-01-01 00:00:00') and ('2021-02-01 00:00:00') then 1 end as recency
+,max(order_date) as last_order_date
+,min(order_date) first_order_date
+,count(distinct order_parent_id) order_count
+,(timestamp_diff(max(order_date),min(order_date), day )/(count(distinct order_parent_id))) as freq_day
+from `datacamp-342108.final.q3_hedefkitle`
+where (order_date between '2021-01-01 00:00:00' and '2021-07-01 00:00:00') 
+group by user_id
+)
+
+select user_id ,recency ,freq_day
+,case when freq_day between 0 and 18 then 5
+when freq_day between 18 and 36 then 4
+when freq_day between 36 and 54 then 3
+when freq_day between 54 and 72 then 2
+else 1 end frequency
+from rfm3)
+
+--QUERY'LER
+--extension daki loyal müşteriler   (3<=r<=4 and 4<=f<=5) değerleri olacak şekilde id'leri belirlendi. 
+
+select distinct user_id from `datacamp-342108.final.q3_extension_rfm` 
+where recency in (3,4) 
+and frequency in (4,5)
+
+select count(distinct user_id) from `datacamp-342108.final.q3_extension_rfm` 
+where recency in (3,4) 
+and frequency in (4,5) -- 2860 kullanıcı
+
+select count(distinct user_id) from `datacamp-342108.final.q3_extension_rfm` 
+where recency not in (3,4) 
+and frequency not in (4,5) -- 628 kullanıcı
+
+
+--recency fe freq_day kodları concad ile kodları birleştirildi ve RF değerleri belirlendi. 
+--hangi kodda daha çok user bulunduğuna göre sıralandı.
+--excele alındı
+
+select concat(recency,frequency) as rf_code, count(distinct user_id) as user_count
+from `final.rfm_core_to_extension`
+group by rf_code
+order by user_count desc;
+
+--core'dan extension'ya geçenlerin oran olarak en fazla user'a sahip kodlar belirlendi.
+--hedef kitle kodları belirlendi ve excele alındı
+
+
+select concat(recency,frequency) as rf_code, count(distinct user_id) as user_count
+from `final.rfm_hedefkitle`
+group by rf_code
+order by user_count desc;
+
+
+--Union all the necessary users
+(
+with rfm_code as (
+  select * from final.q3_hedefkitle
+  left join (select *,
+  concat(recency,frequency) as rf_code
+  from `final.rfm_hedefkitle`) using(user_id)
+)
+
+select distinct user_id
+,count(distinct order_parent_id) order_count
+from rfm_code
+where rf_code='54'
+group by user_id
+order by order_count desc
+limit 3599
+)
+union all
+(
+with rfm_code as (
+  select * from final.q3_hedefkitle
+  left join (select *,
+  concat(recency,frequency) as rf_code
+  from `final.rfm_hedefkitle`) using(user_id)
+)
+
+select distinct user_id
+,count(distinct order_parent_id) order_count
+from rfm_code
+where rf_code='55'
+group by user_id
+order by order_count desc
+)
+
+
+
+
